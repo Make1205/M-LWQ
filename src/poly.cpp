@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <numeric> // for std::accumulate
 #include <array>
-
+#include "ntt.hpp"
 // === 基础模运算 ===
 
 int32_t positive_mod(int64_t val, int32_t q) {
@@ -28,6 +28,7 @@ poly poly_sub(const poly& a, const poly& b) {
     }
     return res;
 }
+
 poly poly_mul_mod(const poly& a, const poly& b) {
     poly res(params::N, 0);
     for (int i = 0; i < params::N; ++i) {
