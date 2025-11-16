@@ -20,8 +20,8 @@ namespace params {
     enum QuantizationType { QUANT_SCALAR, QUANT_D8 };
     
     // *** 在此处切换您想要的量化模式 ***
-    constexpr QuantizationType Q_MODE = QUANT_D8;
-    // constexpr QuantizationType Q_MODE = QUANT_SCALAR;
+    // constexpr QuantizationType Q_MODE = QUANT_D8;
+    constexpr QuantizationType Q_MODE = QUANT_SCALAR;
     // **********************************
 
 
