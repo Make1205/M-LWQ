@@ -20,9 +20,9 @@ The central innovation of LWQ is to replace the additive Gaussian error `e` used
 1.  **Tight Security:** The quantization error can be statistically indistinguishable from a Gaussian error, allowing for a tight security reduction to the standard Module-LWE problem.
 2.  **Extreme Compactness:** By eliminating the need to sample and store large error terms, the scheme can achieve state-of-the-art compactness, as shown in the paper's comparative analysis against Kyber and Saber.
 
-The M-LWQ paper proposes a **Hybrid Quantization Strategy**:
+<!-- The M-LWQ paper proposes a **Hybrid Quantization Strategy**:
 * **Public Key:** Uses **Polar Lattices** to generate quantization error that is statistically close to a Gaussian, enabling a tight security proof.
-* **Ciphertext:** Uses the **$E_8$ Lattice** for an optimal balance of compression and computational efficiency.
+* **Ciphertext:** Uses the **$E_8$ Lattice** for an optimal balance of compression and computational efficiency. -->
 
 ## 2. About This Implementation
 
@@ -34,8 +34,8 @@ This C++ implementation focuses on **correctness validation** and **high-precisi
     * `M-LWQ.PKE.KeyGen` 
     * `M-LWQ.PKE.Encrypt` 
     * `M-LWQ.PKE.Decrypt` 
-* **$E_8$ (D8) Quantization:** This implementation features an efficient, in-place $E_8$ (D8) lattice quantizer (`quantize_d8_block`).
-    * **Note:** Per `params.hpp`, the current configuration (`Q_MODE = QUANT_D8`) applies the $E_8$ quantizer to *all* components (public key `b_q` and ciphertext `u`, `v`).
+* **$\mathbb{Z}$ (Scalar) Quantization:** This implementation features an efficient, in-place $\mathbb{Z}$ (Scalar) lattice quantizer.
+    <!-- * **Note:** Per `params.hpp`, the current configuration (`Q_MODE = QUANT_D8`) applies the $E_8$ quantizer to *all* components (public key `b_q` and ciphertext `u`, `v`). -->
 * **High-Precision Benchmarking:** The `main.cpp` entry point is a comprehensive benchmark tool that uses the `RDTSC` (Read Time-Stamp Counter) instruction for highly accurate CPU cycle counting.
 * **Parameter Set:** The code is pre-configured for **NIST Security Level 1 (M-LWQ-512)**, using `K=2`, `N=256`, `Q=3329`, and `ETA=2`.
 * **Self-Contained:** Includes a minimal C++ implementation of SHAKE-128 (`xof.cpp`, `sha3.cpp`) for seed expansion, requiring no external cryptographic libraries.
