@@ -23,6 +23,7 @@ add_executable(mlwq_demo
     src/xof.cpp
     src/sha3.cpp
     src/ntt.cpp
+    src/keccak4x.cpp  # <--- 新增
 )
 
 # 包含 src 目录作为头文件路径
