@@ -9,6 +9,7 @@ namespace params {
     // --- 量化模式选择 ---
     enum QuantizationType { QUANT_SCALAR, QUANT_D8 };
     // 默认使用标量量化 (Z)，因为 D8 量化较难向量化
+    // constexpr QuantizationType Q_MODE = QUANT_D8;
     constexpr QuantizationType Q_MODE = QUANT_SCALAR;
 
     // --- 基础参数 ---

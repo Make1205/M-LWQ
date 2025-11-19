@@ -78,7 +78,7 @@ The program will run the full PKE suite in Scalar Mode followed by AVX2 Mode, ve
 ==========================================================
 参数集: M-LWQ-512 (NIST L1)
 维度: N=256, K=2, Q=3329, ETA=2
-量化模式: SCALAR (Z)
+量化模式: SCALAR (Z 晶格)
 
 [理论尺寸]
   Public Key: 640 bytes
@@ -96,16 +96,17 @@ The program will run the full PKE suite in Scalar Mode followed by AVX2 Mode, ve
 ==========================================================================
 Operation           Scalar Mode       AVX2 Mode         Speedup        Status
 --------------------------------------------------------------------------
-KeyGen              360593            347928            1.04x     ✅
-Encrypt             725829            697248            1.04x     ✅
-Decrypt             306098            154801            1.98x     ✅
+KeyGen              488919            315476            1.55x     ✅
+Encrypt             503105            429851            1.17x     ✅
+Decrypt             340041            131833            2.58x     ✅
 --------------------------------------------------------------------------
 Component: Quantization vs Sampling (LWE Baseline)
 --------------------------------------------------------------------------
-Quantize(PK)        43797             41071             1.07x     
-Quantize(u)         53558             42914             1.25x     
+Quantize(PK)        60167             48025             1.25x     
+Quantize(u)         41450             37487             1.11x     
+Quantize(v)         28022             27567             1.02x     
 --------------------------------------------------------------------------
-Sample(e) Ref       46793             -                 Baseline
+Sample(e) Ref       50938             -                 Baseline
 ==========================================================================
 
 [FINAL RESULT] 所有模式下的加解密验证均通过！测试完成。

@@ -226,7 +226,7 @@ int main() {
 
     print_row("Quantize(PK)", res_scalar.t_quant_pk, res_avx.t_quant_pk, false);
     print_row("Quantize(u)", res_scalar.t_quant_u, res_avx.t_quant_u, false);
-    
+    print_row("Quantize(v)", res_scalar.t_quant_v, res_avx.t_quant_v, false);
     std::cout << "--------------------------------------------------------------------------\n";
     // 打印 Sample 作为参考
     std::cout << std::left << std::setw(20) << "Sample(e) Ref" 
