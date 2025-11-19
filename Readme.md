@@ -73,39 +73,65 @@ The program will run the full PKE suite in Scalar Mode followed by AVX2 Mode, ve
 (Sample output on an Intel Core i7 CPU)
 
 ```
-==========================================================
-       M-LWQ PKE: 完整流程与组件性能对比
-==========================================================
-参数集: M-LWQ-512 (NIST L1) (N=256, K=2)
+=== M-LWQ Comprehensive Performance Report ===
+N=256, K=2
 
->>> 正在运行: Scalar Mode (1000 轮) <<<
-   [PASS] 正确性验证通过
+>>> Running: Scalar Mode (1000 rounds)...
+   [PASS] Correctness verified.
+>>> Running: AVX2 Mode (1000 rounds)...
+   [PASS] Correctness verified.
 
->>> 正在运行: AVX2 Mode (1000 轮) <<<
-   [PASS] 正确性验证通过
+>>> PART 1: Internal Breakdown (Where is time spent?)
+
+--------------------------------------------------------------------------------------
+ KeyGen Breakdown (Detailed)
+--------------------------------------------------------------------------------------
+Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
+GenMatrix (A)       30035          13286          2.26x          18.3%
+Sample (s)          5476           4589           1.19x          3.3%
+GenDither           16074          14512          1.11x          9.8%
+Arith (A*s)         108576         92251          1.18x          66.1%
+Quantize            4203           521            8.07x          2.6%
+
+--------------------------------------------------------------------------------------
+ Encrypt Breakdown (Detailed)
+--------------------------------------------------------------------------------------
+Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
+GenMatrix (A)       28644          13659          2.10x          12.3%
+Sample (r)          5477           4739           1.16x          2.4%
+GenDither           22848          21984          1.04x          9.8%
+Arith (u)           107954         93025          1.16x          46.4%
+Arith (v)           61608          51038          1.21x          26.5%
+Quantize            6230           1011           6.16x          2.7%
+
+--------------------------------------------------------------------------------------
+ Decrypt Breakdown (Detailed)
+--------------------------------------------------------------------------------------
+Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
+DeQuantize          9277           3265           2.84x          12.7%
+Arith (v-su)        54629          47873          1.14x          74.9%
+Decode              8983           150            59.89x          12.3%
 
 
-==============================================================================================
-                       核心组件性能对比 (Cycles)
-==============================================================================================
+>>> PART 2: Core Component Comparison (Quantize vs Sample)
+----------------------------------------------------------------------------------------------
 Component   Mode        Quantize        Sample          Alg. Efficiency       AVX Improvement     
 ----------------------------------------------------------------------------------------------
-PK / u      Scalar      47776           47559           0.99x                 1.00x (Ref)         
-PK / u      AVX2        20751           48263           2.32x                 2.30x               
+PK / u      Scalar      3401            4109            1.20x                 1.00x (Ref)         
+PK / u      AVX2        248             4698            18.88x                13.67x              
 ----------------------------------------------------------------------------------------------
-v (Poly)    Scalar      28369           33845           1.19x                 1.00x (Ref)         
-v (Poly)    AVX2        19765           41655           2.10x                 1.44x               
+v (Poly)    Scalar      2142            2071            0.96x                 1.00x (Ref)         
+v (Poly)    AVX2        156             2500            16.2x                 13.73x              
 
 
-==============================================================================================
-                       完整流程加速比 (Include SHAKE GenA)
-==============================================================================================
+>>> PART 3: Full Flow Summary (Total Time)
+----------------------------------------------------------------------------------------------
 Operation           Scalar Cycles     AVX2 Cycles       Speedup
 ----------------------------------------------------------------------------------------------
-KeyGen (Full)       323118            264328            1.22x
-Encrypt (Full)      431172            356118            1.21x
-Decrypt (Full)      129783            98851             1.31x
-==============================================================================================
+KeyGen              166956            127495            1.31x
+Encrypt             234873            187327            1.25x
+Decrypt             73299             51650             1.42x
+----------------------------------------------------------------------------------------------
 ```
 Note: Speedup factors depend on your specific CPU architecture. The NTT implementation reduces complexity from quadratic to log-linear, providing significant gains even without AVX, while AVX2 further accelerates the vectorized operations.
 
@@ -126,10 +152,8 @@ Note: Speedup factors depend on your specific CPU architecture. The NTT implemen
 │   └── cycles.hpp          # RDTSC cycle counter
 └── ...
 ```
-## 6. Academic Citation
+<!-- ## 6. Academic Citation
 If you use this work in your research, please cite the accompanying paper:
-
-代码段
 ```
 @misc{cryptoeprint:2024/714,
       author = {Shanxiang Lyu and Ling Liu and Cong Ling},
@@ -138,6 +162,6 @@ If you use this work in your research, please cite the accompanying paper:
       year = {2024},
       url = {[https://eprint.iacr.org/2024/714](https://eprint.iacr.org/2024/714)}
 }
-```
+``` -->
 ## 7. License
 This project is licensed under the MIT License.
