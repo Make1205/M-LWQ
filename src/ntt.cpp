@@ -1,5 +1,3 @@
-// 最终完整的 ntt.cpp (包含标量和AVX路径)
-// 请使用此代码覆盖
 #include "ntt.hpp"
 #include <vector>
 #include <algorithm>
@@ -8,6 +6,7 @@
 namespace ntt {
     using i16 = int16_t;
     using i32 = int32_t;
+
     std::vector<i16> zetas(128);
     alignas(32) i16 zetas_avx_storage[16 * 16]; 
     const i16 Q = 3329;
@@ -50,6 +49,7 @@ namespace ntt {
         initialized = true;
     }
 
+    // [关键修复] 安全的 AVX2 模乘 (Float Approx + Correction)
     inline __m256i vec_mul_mod_safe(__m256i a, __m256i b) {
         __m128i a_lo = _mm256_castsi256_si128(a);
         __m128i a_hi = _mm256_extracti128_si256(a, 1);
@@ -62,13 +62,17 @@ namespace ntt {
         __m256i prod_lo = _mm256_mullo_epi32(a_lo_32, b_lo_32);
         __m256i prod_hi = _mm256_mullo_epi32(a_hi_32, b_hi_32);
         __m256i v_q = _mm256_set1_epi32(Q);
+
+        // 修正逻辑: 确保结果在 [0, Q)
         auto reduce = [&](__m256i val) {
             __m256 vf = _mm256_cvtepi32_ps(val);
             __m256 iq = _mm256_set1_ps(1.0f / 3329.0f);
             __m256i q = _mm256_cvttps_epi32(_mm256_mul_ps(vf, iq));
             __m256i r = _mm256_sub_epi32(val, _mm256_mullo_epi32(q, v_q));
+            // Correction 1: r < 0 -> r += Q
             __m256i m1 = _mm256_cmpgt_epi32(_mm256_setzero_si256(), r);
             r = _mm256_add_epi32(r, _mm256_and_si256(m1, v_q));
+            // Correction 2: r >= Q -> r -= Q
             __m256i m2 = _mm256_cmpgt_epi32(r, _mm256_sub_epi32(v_q, _mm256_set1_epi32(1)));
             r = _mm256_sub_epi32(r, _mm256_and_si256(m2, v_q));
             return r;
@@ -78,6 +82,7 @@ namespace ntt {
         return _mm256_permute4x64_epi64(_mm256_packus_epi32(rl, rh), 0xD8);
     }
 
+    // NTT 结构保持部分向量化 (上层向量化，下层标量)
     void ntt_forward(std::vector<i16>& a) {
         int k = 1;
         if (params::USE_AVX2) {
@@ -113,7 +118,6 @@ namespace ntt {
                 }
             }
         } else {
-            // Pure Scalar
             for (int len = 128; len >= 2; len >>= 1) {
                 for (int start = 0; start < params::N; start += 2 * len) {
                     i16 zeta = zetas[k++];
@@ -175,7 +179,6 @@ namespace ntt {
                 _mm256_storeu_si256((__m256i*)&a[i], scaled);
             }
         } else {
-            // Scalar Inverse
             for (int len = 2; len <= 128; len <<= 1) {
                 int k_start = 128 / len;
                 for (int start = 0; start < params::N; start += 2 * len) {
