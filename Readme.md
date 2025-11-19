@@ -74,42 +74,37 @@ The program will run the full PKE suite in Scalar Mode followed by AVX2 Mode, ve
 
 ```
 ==========================================================
-       M-LWQ PKE: 全面性能对比 (Quantize vs Sample)
+       M-LWQ PKE: 完整流程与组件性能对比
 ==========================================================
 参数集: M-LWQ-512 (NIST L1) (N=256, K=2)
 
->>> 正在运行: Scalar Mode (100 轮) <<<
+>>> 正在运行: Scalar Mode (1000 轮) <<<
    [PASS] 正确性验证通过
 
->>> 正在运行: AVX2 Mode (100 轮) <<<
+>>> 正在运行: AVX2 Mode (1000 轮) <<<
    [PASS] 正确性验证通过
 
 
 ==============================================================================================
-                       核心组件性能对比 (Cycles) | Lower is Better
+                       核心组件性能对比 (Cycles)
 ==============================================================================================
-Component   Mode        Quantize(M-LWQ) Sample(LWE)     Alg. Efficiency       AVX Improvement     
-                        (Cycles)        (Cycles)        (Sample / Quant)      (Scalar / AVX)      
+Component   Mode        Quantize        Sample          Alg. Efficiency       AVX Improvement     
 ----------------------------------------------------------------------------------------------
-PK / u      Scalar      40282           53725           1.33x                 1.00x (Ref)         
-PK / u      AVX2        37070           46865           1.26x                 1.09x               
+PK / u      Scalar      47776           47559           0.99x                 1.00x (Ref)         
+PK / u      AVX2        20751           48263           2.32x                 2.30x               
 ----------------------------------------------------------------------------------------------
-v (Poly)    Scalar      27461           32194           1.17x                 1.00x (Ref)         
-v (Poly)    AVX2        27450           39171           1.42x                 1.00x               
-==============================================================================================
-说明:
-1. Alg. Efficiency (Sample / Quant): 表示在当前模式下，Quantize 比 Sample 快多少倍。
-2. AVX Improvement (Scalar / AVX):   表示 AVX2 版本的 Quantize 比 Scalar 版本快多少倍。
+v (Poly)    Scalar      28369           33845           1.19x                 1.00x (Ref)         
+v (Poly)    AVX2        19765           41655           2.10x                 1.44x               
 
 
 ==============================================================================================
-                       完整流程加速比 (Scalar vs AVX2)
+                       完整流程加速比 (Include SHAKE GenA)
 ==============================================================================================
-Operation           Scalar Cycles     AVX2 Cycles       Speedup (Scalar / AVX2)
+Operation           Scalar Cycles     AVX2 Cycles       Speedup
 ----------------------------------------------------------------------------------------------
-KeyGen              322764            318362            1.01x
-Encrypt             638169            425448            1.50x
-Decrypt             164618            119171            1.38x
+KeyGen (Full)       323118            264328            1.22x
+Encrypt (Full)      431172            356118            1.21x
+Decrypt (Full)      129783            98851             1.31x
 ==============================================================================================
 ```
 Note: Speedup factors depend on your specific CPU architecture. The NTT implementation reduces complexity from quadratic to log-linear, providing significant gains even without AVX, while AVX2 further accelerates the vectorized operations.
