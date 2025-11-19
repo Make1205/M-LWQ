@@ -143,7 +143,7 @@ int main() {
     std::cout << "==========================================================\n";
     std::cout << "参数集: " << params::PARAM_SET_NAME << " (N=" << params::N << ", K=" << params::K << ")\n";
 
-    int rounds = 1000;
+    int rounds = 10000;
     BenchResult scalar = run_full_benchmark(false, rounds);
     BenchResult avx = run_full_benchmark(true, rounds);
 
