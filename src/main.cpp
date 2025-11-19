@@ -11,7 +11,7 @@
 #include "mlwq.hpp"
 #include "random.hpp" // for random_poly_uniform, random_poly_vec_eta
 #include "xof.hpp"    // <-- 新增: 需要 XOF 来生成抖动
-
+#include "ntt.hpp" 
 // 辅助函数，用于创建随机种子
 std::vector<uint8_t> string_to_seed(const std::string& s) {
     return std::vector<uint8_t>(s.begin(), s.end());
@@ -31,6 +31,7 @@ double calculate_average(const std::vector<unsigned long long>& timings) {
 }
 
 int main() {
+    ntt::init_tables();
     std::cout << "=== C++ M-LWQ PKE 完整验证与性能基准 ===\n";
     std::cout << "参数集: " << params::PARAM_SET_NAME << "\n";
     std::cout << "参数: K=" << params::K

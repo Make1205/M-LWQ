@@ -29,18 +29,28 @@ poly poly_sub(const poly& a, const poly& b) {
     return res;
 }
 
+// poly poly_mul_mod(const poly& a, const poly& b) {
+//     poly res(params::N, 0);
+//     for (int i = 0; i < params::N; ++i) {
+//         for (int j = 0; j < params::N; ++j) {
+//             int k = (i + j) % params::N;
+//             int sign = (i + j) >= params::N ? -1 : 1;
+//             int64_t term = static_cast<int64_t>(a[i]) * b[j];
+//             int64_t val = res[k] + sign * term;
+//             res[k] = positive_mod(val, params::Q);
+//         }
+//     }
+//     return res;
+// }
+
+
 poly poly_mul_mod(const poly& a, const poly& b) {
-    poly res(params::N, 0);
-    for (int i = 0; i < params::N; ++i) {
-        for (int j = 0; j < params::N; ++j) {
-            int k = (i + j) % params::N;
-            int sign = (i + j) >= params::N ? -1 : 1;
-            int64_t term = static_cast<int64_t>(a[i]) * b[j];
-            int64_t val = res[k] + sign * term;
-            res[k] = positive_mod(val, params::Q);
-        }
-    }
-    return res;
+    // 调用 NTT 加速乘法
+    // ntt::poly_mul_ntt 内部已经处理了:
+    // 1. 初始化表 (Lazy init)
+    // 2. 前向变换 -> BaseMul -> 逆变换
+    // 3. 结果修正到 [0, Q)
+    return ntt::poly_mul_ntt(a, b);
 }
 
 // poly poly_mul_mod(const poly& a, const poly& b) {
