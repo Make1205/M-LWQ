@@ -87,51 +87,53 @@ N=256, K=2
  KeyGen Breakdown (Detailed)
 --------------------------------------------------------------------------------------
 Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
-GenMatrix (A)       30035          13286          2.26x          18.3%
-Sample (s)          5476           4589           1.19x          3.3%
-GenDither           16074          14512          1.11x          9.8%
-Arith (A*s)         108576         92251          1.18x          66.1%
-Quantize            4203           521            8.07x          2.6%
+GenMatrix (A)       27754          13898          2.00x          18.2%
+Sample (s)          5027           4647           1.08x          3.3%
+GenDither           14480          13758          1.05x          9.5%
+Arith (A*s)         101448         89632          1.13x          66.3%
+Quantize            4191           469            8.94x          2.7%
 
 --------------------------------------------------------------------------------------
  Encrypt Breakdown (Detailed)
 --------------------------------------------------------------------------------------
 Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
-GenMatrix (A)       28644          13659          2.10x          12.3%
-Sample (r)          5477           4739           1.16x          2.4%
-GenDither           22848          21984          1.04x          9.8%
-Arith (u)           107954         93025          1.16x          46.4%
-Arith (v)           61608          51038          1.21x          26.5%
-Quantize            6230           1011           6.16x          2.7%
+GenMatrix (A)       25904          13550          1.91x          11.7%
+Sample (r)          5425           4741           1.14x          2.4%
+GenDither           22529          21061          1.07x          10.1%
+Arith (u)           103194         91999          1.12x          46.4%
+Arith (v)           58289          48334          1.21x          26.2%
+Quantize            6972           940            7.42x          3.1%
 
 --------------------------------------------------------------------------------------
  Decrypt Breakdown (Detailed)
 --------------------------------------------------------------------------------------
 Sub-Component       Scalar (cyc)   AVX2 (cyc)     Speedup        Scalar %
-DeQuantize          9277           3265           2.84x          12.7%
-Arith (v-su)        54629          47873          1.14x          74.9%
-Decode              8983           150            59.89x          12.3%
+DeQuantize          8352           3390           2.46x          12.5%
+Arith (v-su)        50017          45541          1.10x          74.6%
+Decode              8710           139            62.66x          13.0%
 
 
 >>> PART 2: Core Component Comparison (Quantize vs Sample)
 ----------------------------------------------------------------------------------------------
 Component   Mode        Quantize        Sample          Alg. Efficiency       AVX Improvement     
 ----------------------------------------------------------------------------------------------
-PK / u      Scalar      3401            4109            1.20x                 1.00x (Ref)         
-PK / u      AVX2        248             4698            18.88x                13.67x              
+PK / u      Scalar      3691            4201            1.13x                 1.00x (Ref)         
+PK / u      AVX2        246             4265            17.32x                15.00x              
 ----------------------------------------------------------------------------------------------
-v (Poly)    Scalar      2142            2071            0.96x                 1.00x (Ref)         
-v (Poly)    AVX2        156             2500            16.2x                 13.73x              
+v (Poly)    Scalar      1618            2661            1.64x                 1.00x (Ref)         
+v (Poly)    AVX2        158             1900            11.97x                10.20x              
 
 
 >>> PART 3: Full Flow Summary (Total Time)
 ----------------------------------------------------------------------------------------------
 Operation           Scalar Cycles     AVX2 Cycles       Speedup
 ----------------------------------------------------------------------------------------------
-KeyGen              166956            127495            1.31x
-Encrypt             234873            187327            1.25x
-Decrypt             73299             51650             1.42x
+KeyGen              154790            124479            1.24x
+Encrypt             223969            182193            1.23x
+Decrypt             67719             49405             1.37x
 ----------------------------------------------------------------------------------------------
+
+[FINAL] All checks passed! Implementation is correct.
 ```
 Note: Speedup factors depend on your specific CPU architecture. The NTT implementation reduces complexity from quadratic to log-linear, providing significant gains even without AVX, while AVX2 further accelerates the vectorized operations.
 
