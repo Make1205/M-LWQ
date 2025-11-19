@@ -8,77 +8,160 @@
 #include <immintrin.h> // AVX2
 
 // === 基础模运算 ===
-int32_t positive_mod(int64_t val, int32_t q) {
-    int64_t res = val % q;
-    return (res < 0) ? (res + q) : static_cast<int32_t>(res);
+int16_t positive_mod(int64_t val, int16_t q) {
+    int16_t res = val % q;
+    return (res < 0) ? (res + q) : static_cast<int16_t>(res);
 }
 
-// === AVX2 Helper Functions (手动 AVX2 实现) ===
+// ==========================================
+// AVX2 Helper Functions (手动 AVX2 实现)
+// ==========================================
 
 poly poly_add_avx(const poly& a, const poly& b) {
     poly res(params::N);
-    // 每次处理 8 个 32位整数
-    for (int i = 0; i < params::N; i += 8) {
+    for (int i = 0; i < params::N; i += 16) { 
         __m256i va = _mm256_loadu_si256((__m256i*)&a[i]);
         __m256i vb = _mm256_loadu_si256((__m256i*)&b[i]);
-        __m256i vsum = _mm256_add_epi32(va, vb); // 并行加法
+        __m256i vsum = _mm256_add_epi16(va, vb); 
         _mm256_storeu_si256((__m256i*)&res[i], vsum);
     }
-    // 后处理取模 (混合模式：AVX算，Scalar修)
-    // 由于输入都在 [0, Q) 范围，sum < 2Q，修正很快
-    for(int i=0; i<params::N; ++i) {
-        if (res[i] >= params::Q) res[i] -= params::Q;
-    }
+    for(int i=0; i<params::N; ++i) if (res[i] >= params::Q) res[i] -= params::Q;
     return res;
 }
 
 poly poly_sub_avx(const poly& a, const poly& b) {
     poly res(params::N);
-    for (int i = 0; i < params::N; i += 8) {
+    for (int i = 0; i < params::N; i += 16) { 
         __m256i va = _mm256_loadu_si256((__m256i*)&a[i]);
         __m256i vb = _mm256_loadu_si256((__m256i*)&b[i]);
-        __m256i vsub = _mm256_sub_epi32(va, vb); // 并行减法
+        __m256i vsub = _mm256_sub_epi16(va, vb); 
         _mm256_storeu_si256((__m256i*)&res[i], vsub);
     }
-    // 后处理取模: 如果结果为负，加 Q
-    for(int i=0; i<params::N; ++i) {
-        if (res[i] < 0) res[i] += params::Q;
+    for(int i=0; i<params::N; ++i) if (res[i] < 0) res[i] += params::Q;
+    return res;
+}
+
+poly poly_quantize_avx_explicit(const poly& val, const poly& d, int32_t P_param) {
+    poly res(params::N);
+    float scale_val = (float)P_param / (float)params::Q;
+    __m256 v_scale = _mm256_set1_ps(scale_val);
+    __m256i v_mask = _mm256_set1_epi32(P_param - 1); // P needs to be 2^k
+
+    for (int i = 0; i < params::N; i += 8) {
+        __m128i v_val_128 = _mm_loadu_si128((__m128i*)&val[i]);
+        __m128i v_d_128   = _mm_loadu_si128((__m128i*)&d[i]);
+        __m256i v_val = _mm256_cvtepi16_epi32(v_val_128);
+        __m256i v_d   = _mm256_cvtepi16_epi32(v_d_128);
+        __m256i v_sum = _mm256_add_epi32(v_val, v_d);
+        __m256 v_sum_f = _mm256_cvtepi32_ps(v_sum);
+        __m256 v_res_f = _mm256_mul_ps(v_sum_f, v_scale);
+        __m256 v_floor_f = _mm256_floor_ps(v_res_f);
+        __m256i v_res_i32 = _mm256_cvtps_epi32(v_floor_f);
+        v_res_i32 = _mm256_and_si256(v_res_i32, v_mask);
+        
+        int32_t tmp[8];
+        _mm256_storeu_si256((__m256i*)tmp, v_res_i32);
+        for(int k=0; k<8; ++k) res[i+k] = (int16_t)tmp[k];
     }
     return res;
 }
 
-// === 多项式运算 (mod Q) ===
+// [新增] AVX2 反量化
+// res = (b * Q) / P
+poly poly_dequantize_avx(const poly& b, int32_t P_param) {
+    poly res(params::N);
+    float scale_val = (float)params::Q / (float)P_param;
+    __m256 v_scale = _mm256_set1_ps(scale_val);
+
+    for (int i = 0; i < params::N; i += 8) {
+        __m128i v_b_128 = _mm_loadu_si128((__m128i*)&b[i]);
+        __m256i v_b = _mm256_cvtepi16_epi32(v_b_128);
+        __m256 v_b_f = _mm256_cvtepi32_ps(v_b);
+        __m256 v_res_f = _mm256_mul_ps(v_b_f, v_scale);
+        
+        // round: floor(x + 0.5)
+        __m256 v_round_f = _mm256_floor_ps(_mm256_add_ps(v_res_f, _mm256_set1_ps(0.5f)));
+        __m256i v_res_i32 = _mm256_cvtps_epi32(v_round_f);
+        
+        // Store
+        int32_t tmp[8];
+        _mm256_storeu_si256((__m256i*)tmp, v_res_i32);
+        for(int k=0; k<8; ++k) res[i+k] = positive_mod(tmp[k], params::Q);
+    }
+    return res;
+}
+
+// [新增] AVX2 消息解码
+// res = round( (val * 2) / Q ) mod 2
+poly poly_message_decode_avx(const poly& val) {
+    poly res(params::N);
+    // Logic:
+    // centered = val > Q/2 ? val - Q : val
+    // scaled = centered * (2/Q)
+    // round(scaled) mod 2
+    
+    // 简化逻辑用于 2/Q:
+    // 直接观察 val. 如果 val 在 [-Q/4, Q/4] -> 0, else -> 1
+    // 即: 如果 val \in [0, Q/4] or [3Q/4, Q) -> 0
+    //     如果 val \in [Q/4, 3Q/4] -> 1
+    
+    int16_t q_4 = params::Q / 4;
+    int16_t q_34 = (params::Q * 3) / 4;
+    
+    __m256i v_q4 = _mm256_set1_epi16(q_4);
+    __m256i v_q34 = _mm256_set1_epi16(q_34);
+    __m256i v_one = _mm256_set1_epi16(1);
+    __m256i v_zero = _mm256_setzero_si256();
+
+    for (int i = 0; i < params::N; i += 16) {
+        __m256i v = _mm256_loadu_si256((__m256i*)&val[i]);
+        
+        // mask1: v > q_4  (signed compare works if q_4 positive)
+        __m256i m1 = _mm256_cmpgt_epi16(v, v_q4);
+        // mask2: v < q_34 (use gt: q_34 > v)
+        __m256i m2 = _mm256_cmpgt_epi16(v_q34, v);
+        
+        // res = m1 & m2 (即 v > Q/4 AND v < 3Q/4)
+        __m256i mask = _mm256_and_si256(m1, m2);
+        
+        // mask is 0xFFFF (-1) if true, 0 if false.
+        // result = 1 & mask = (1 if true, 0 if false) -- but mask is -1.
+        // -1 is 1111...1.  1 & 111...1 = 1.
+        // Wait, we want result to be 0 or 1.
+        // _mm256_and_si256(v_one, mask) -> 1 if true, 0 if false.
+        
+        __m256i r = _mm256_and_si256(v_one, mask);
+        _mm256_storeu_si256((__m256i*)&res[i], r);
+    }
+    return res;
+}
+
+// ==========================================
+// 多项式运算 (mod Q)
+// ==========================================
 
 poly poly_add(const poly& a, const poly& b) {
     if (params::USE_AVX2) return poly_add_avx(a, b);
-
-    // 标量 fallback
     poly res(params::N);
-    for (size_t i = 0; i < params::N; ++i) {
-        res[i] = positive_mod(static_cast<int64_t>(a[i]) + b[i], params::Q);
-    }
+    for (size_t i = 0; i < params::N; ++i) res[i] = positive_mod((int32_t)a[i] + b[i], params::Q);
     return res;
 }
 
 poly poly_sub(const poly& a, const poly& b) {
     if (params::USE_AVX2) return poly_sub_avx(a, b);
-
-    // 标量 fallback
     poly res(params::N);
-    for (size_t i = 0; i < params::N; ++i) {
-        res[i] = positive_mod(static_cast<int64_t>(a[i]) - b[i], params::Q);
-    }
+    for (size_t i = 0; i < params::N; ++i) res[i] = positive_mod((int32_t)a[i] - b[i], params::Q);
     return res;
 }
 
-// 核心修改：使用 NTT 加速乘法
 poly poly_mul_mod(const poly& a, const poly& b) {
-    // params::USE_AVX2 的检查在 ntt::poly_mul_ntt 内部处理
     return ntt::poly_mul_ntt(a, b);
 }
 
-// === 向量/矩阵运算 (保持不变) ===
-// 这些函数会调用上面的 poly_add/poly_mul_mod，从而自动获得加速
+// ==========================================
+// 向量/矩阵运算
+// ==========================================
+// (保持不变，会自动调用上面的 add/mul)
 poly_vec poly_vec_add(const poly_vec& a, const poly_vec& b) {
     if (a.size() != b.size()) throw std::runtime_error("size mismatch");
     poly_vec res(a.size());
@@ -119,22 +202,24 @@ poly_matrix poly_matrix_transpose(const poly_matrix& A) {
     return A_t;
 }
 
-// === 量化部分 ===
+// ==========================================
+// 量化部分 (适配更新)
+// ==========================================
 
-void quantize_d8_block(std::array<int32_t, 8>& b_block, const std::array<int32_t, 8>& val_block, const std::array<int32_t, 8>& d_block, int32_t P_param) {
-    // D8 Lattice CVP
+// D8 代码 (省略，保持不变)
+void quantize_d8_block(std::array<int16_t, 8>& b_block, const std::array<int16_t, 8>& val_block, const std::array<int16_t, 8>& d_block, int32_t P_param) {
     const double scale_pq = static_cast<double>(P_param) / params::Q;
     std::array<double, 8> x_scaled;
-    std::array<int32_t, 8> z_rounded;
+    std::array<int16_t, 8> z_rounded;
     int32_t sum = 0;
     for (int i = 0; i < 8; ++i) {
-        int32_t added_val = positive_mod(static_cast<int64_t>(val_block[i]) + d_block[i], params::Q);
+        int16_t added_val = positive_mod((int32_t)val_block[i] + d_block[i], params::Q);
         x_scaled[i] = static_cast<double>(added_val) * scale_pq;
-        z_rounded[i] = static_cast<int32_t>(std::round(x_scaled[i]));
+        z_rounded[i] = static_cast<int16_t>(std::round(x_scaled[i]));
         sum += z_rounded[i];
     }
     if (sum % 2 == 0) {
-        for (int i = 0; i < 8; ++i) b_block[i] = positive_mod(z_rounded[i], P_param);
+        for (int i = 0; i < 8; ++i) b_block[i] = positive_mod(z_rounded[i], (int16_t)P_param);
         return;
     }
     int j_max_dist = 0; double max_dist = -1.0;
@@ -144,24 +229,26 @@ void quantize_d8_block(std::array<int32_t, 8>& b_block, const std::array<int32_t
     }
     if (x_scaled[j_max_dist] > z_rounded[j_max_dist]) z_rounded[j_max_dist] += 1;
     else z_rounded[j_max_dist] -= 1;
-    for (int i = 0; i < 8; ++i) b_block[i] = positive_mod(z_rounded[i], P_param);
+    for (int i = 0; i < 8; ++i) b_block[i] = positive_mod(z_rounded[i], (int16_t)P_param);
 }
 
 poly poly_quantize(const poly& val, const poly& d, int32_t P_param) {
+    if (params::USE_AVX2 && params::Q_MODE == params::QUANT_SCALAR) {
+        return poly_quantize_avx_explicit(val, d, P_param);
+    }
+    // Scalar Fallback
     poly b(params::N);
     if constexpr (params::Q_MODE == params::QUANT_SCALAR) {
-        // 标量量化
         const double scale_pq = static_cast<double>(P_param) / params::Q;
-        // 如果开启了 AVX2 (-mavx2)，编译器通常会自动向量化这个循环
         for(int i = 0; i < params::N; ++i) {
-            int32_t added_val = positive_mod(static_cast<int64_t>(val[i]) + d[i], params::Q);
+            int16_t added_val = positive_mod((int32_t)val[i] + d[i], params::Q);
             double scaled_val = scale_pq * added_val;
-            int32_t floored_val = static_cast<int32_t>(std::floor(scaled_val));
-            b[i] = positive_mod(floored_val, P_param);
+            int16_t floored_val = static_cast<int16_t>(std::floor(scaled_val));
+            b[i] = positive_mod(floored_val, (int16_t)P_param);
         }
     } else if constexpr (params::Q_MODE == params::QUANT_D8) {
         for (int i = 0; i < params::N; i += 8) {
-            std::array<int32_t, 8> val_block, d_block, b_block;
+            std::array<int16_t, 8> val_block, d_block, b_block;
             for (int j = 0; j < 8; ++j) { val_block[j] = val[i + j]; d_block[j] = d[i + j]; }
             quantize_d8_block(b_block, val_block, d_block, P_param);
             for (int j = 0; j < 8; ++j) b[i + j] = b_block[j];
@@ -177,11 +264,14 @@ poly_vec poly_vec_quantize(const poly_vec& val, const poly_vec& d, int32_t P_par
 }
 
 poly poly_dequantize(const poly& b, int32_t P_param) {
+    // [修改] 使用 AVX2
+    if (params::USE_AVX2) return poly_dequantize_avx(b, P_param);
+    
     poly res(params::N);
     const double scale_qp = static_cast<double>(params::Q) / P_param;
     for(int i = 0; i < params::N; ++i) {
         double scaled_val = scale_qp * b[i];
-        int64_t rounded_val = static_cast<int64_t>(std::round(scaled_val));
+        int16_t rounded_val = static_cast<int16_t>(std::round(scaled_val));
         res[i] = positive_mod(rounded_val, params::Q);
     }
     return res;
@@ -196,24 +286,28 @@ poly_vec poly_vec_dequantize(const poly_vec& b, int32_t P_param) {
 poly poly_message_encode(const poly& m) {
     poly res(params::N);
     const int32_t scale = params::Q / params::MSG_MODULUS;
-    for (int i = 0; i < params::N; ++i) res[i] = positive_mod(static_cast<int64_t>(m[i]) * scale, params::Q);
+    for (int i = 0; i < params::N; ++i) res[i] = positive_mod((int32_t)m[i] * scale, params::Q);
     return res;
 }
 
 poly poly_message_decode(const poly& val) {
+    // [修改] 使用 AVX2
+    if (params::USE_AVX2) return poly_message_decode_avx(val);
+
     poly res(params::N);
     const double scale = static_cast<double>(params::MSG_MODULUS) / params::Q;
     const int32_t q_half = params::Q / 2;
     for (int i = 0; i < params::N; ++i) {
-        int32_t centered_val = positive_mod(val[i], params::Q);
+        int16_t centered_val = positive_mod(val[i], params::Q);
         if (centered_val > q_half) centered_val -= params::Q;
         double scaled_val = static_cast<double>(centered_val) * scale;
-        int64_t rounded_val = static_cast<int64_t>(std::round(scaled_val));
-        res[i] = positive_mod(rounded_val, params::MSG_MODULUS);
+        int16_t rounded_val = static_cast<int16_t>(std::round(scaled_val));
+        res[i] = positive_mod(rounded_val, (int16_t)params::MSG_MODULUS);
     }
     return res;
 }
 
+// 辅助函数 (Print/Check) ...
 void print_poly(const std::string& name, const poly& p, size_t count) {
     std::cout << "  " << name << " [";
     size_t n = std::min(count, p.size());

@@ -4,13 +4,13 @@
 #include <string>
 #include "params.hpp"
 
-// 类型别名
-using poly = std::vector<int32_t>;
+// [核心定义] 使用 int16_t
+using poly = std::vector<int16_t>;
 using poly_vec = std::vector<poly>;
-using poly_matrix = std::vector<poly_vec>; // k x k 矩阵 (poly_vec 的向量)
+using poly_matrix = std::vector<poly_vec>;
 
 // --- 基础模运算 ---
-int32_t positive_mod(int64_t val, int32_t q);
+int16_t positive_mod(int64_t val, int16_t q);
 
 // --- 多项式运算 (mod Q) ---
 poly poly_add(const poly& a, const poly& b);
@@ -24,8 +24,7 @@ poly_vec poly_matrix_vec_mul(const poly_matrix& A, const poly_vec& s);
 poly poly_vec_transpose_mul(const poly_vec& a_t, const poly_vec& b);
 poly_matrix poly_matrix_transpose(const poly_matrix& A);
 
-// --- 量化 & 反量化 (已修改) ---
-// 现在接受一个独立的 P 参数
+// --- 量化 & 反量化 ---
 poly poly_quantize(const poly& val, const poly& d, int32_t P_param);
 poly_vec poly_vec_quantize(const poly_vec& val, const poly_vec& d, int32_t P_param);
 poly poly_dequantize(const poly& b, int32_t P_param);
