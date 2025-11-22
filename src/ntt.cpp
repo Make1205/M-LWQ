@@ -7,261 +7,345 @@ namespace ntt {
     using i16 = int16_t;
     using i32 = int32_t;
 
-    std::vector<i16> zetas(128);
-    alignas(32) i16 zetas_avx_storage[16 * 16]; 
+    // =============================================================
+    // 1. Constants
+    // =============================================================
     const i16 Q = 3329;
-    const i16 ZETA = 17;
-    const i32 Q_BARRETT_MUL = 20159; 
-    const i32 Q_BARRETT_SHIFT = 26;
+    const i16 QINV = -3327; 
+    const i16 R2 = 1353;    
+    const i16 F_FACTOR = 1441; 
 
-    inline i16 barrett_reduce(i32 a) {
-        i32 v = ((int64_t)a * Q_BARRETT_MUL) >> Q_BARRETT_SHIFT;
-        v = a - v * Q;
-        return (i16)v;
+    // AVX Constants
+    const __m256i AVX_Q = _mm256_set1_epi16(3329);
+    const __m256i AVX_QINV = _mm256_set1_epi16(-3327);
+    const __m256i AVX_R2 = _mm256_set1_epi16(1353);
+    const __m256i AVX_F = _mm256_set1_epi16(1441);
+    const __m256i AVX_BARRETT_MUL = _mm256_set1_epi16(20159); 
+
+    const i16 zetas[128] = {
+      -1044,  -758,  -359, -1517,  1493,  1422,   287,   202,
+       -171,   622,  1577,   182,   962, -1202, -1474,  1468,
+        573, -1325,   264,   383,  -829,  1458, -1602,  -130,
+       -681,  1017,   732,   608, -1542,   411,  -205, -1571,
+       1223,   652,  -552,  1015, -1293,  1491,  -282, -1544,
+        516,    -8,  -320,  -666, -1618, -1162,   126,  1469,
+       -853,   -90,  -271,   830,   107, -1421,  -247,  -951,
+       -398,   961, -1508,  -725,   448, -1065,   677, -1275,
+      -1103,   430,   555,   843, -1251,   871,  1550,   105,
+        422,   587,   177,  -235,  -291,  -460,  1574,  1653,
+       -246,   778,  1159,  -147,  -777,  1483,  -602,  1119,
+      -1590,   644,  -872,   349,   418,   329,  -156,   -75,
+        817,  1097,   603,   610,  1322, -1285, -1465,   384,
+      -1215,  -136,  1218, -1335,  -874,   220, -1187, -1659,
+      -1185, -1530, -1278,   794, -1510,  -854,  -870,   478,
+       -108,  -308,   996,   991,   958, -1460,  1522,  1628
+    };
+
+    void init_tables() {}
+
+    // =============================================================
+    // 2. Math Helpers
+    // =============================================================
+
+    inline i16 montgomery_reduce(i32 a) {
+        i16 u = (i16)(a * (i32)QINV);
+        i32 t = (i32)((int64_t)u * Q);
+        t = a - t;
+        t >>= 16;
+        return (i16)t;
     }
-    i16 mod_pow(i16 base, i16 exp) {
-        i32 res = 1; i32 b = base;
-        while (exp > 0) {
-            if (exp & 1) res = barrett_reduce(res * b);
-            b = barrett_reduce(b * b);
-            exp >>= 1;
+    
+    inline i16 fqmul(i16 a, i16 b) {
+        return montgomery_reduce((i32)a * b);
+    }
+
+    inline i16 barrett_reduce(i16 a) {
+        i16 v = ((i32)a * 20159) >> 26;
+        v = a - v * 3329;
+        return v;
+    }
+
+    inline __m256i montgomery_mul_avx(__m256i a, __m256i b) {
+        __m256i t_low = _mm256_mullo_epi16(a, b);
+        __m256i k = _mm256_mullo_epi16(t_low, AVX_QINV);
+        __m256i m = _mm256_mulhi_epi16(k, AVX_Q);
+        __m256i t_high = _mm256_mulhi_epi16(a, b);
+        return _mm256_sub_epi16(t_high, m);
+    }
+
+    inline __m256i barrett_reduce_avx(__m256i a) {
+        __m256i v = _mm256_mulhi_epi16(a, AVX_BARRETT_MUL);
+        v = _mm256_srai_epi16(v, 10); 
+        __m256i vq = _mm256_mullo_epi16(v, AVX_Q);
+        return _mm256_sub_epi16(a, vq);
+    }
+
+    // =============================================================
+    // 3. Robust AVX2 NTT
+    // =============================================================
+
+    inline void butterfly_avx(__m256i& a, __m256i& b, __m256i zeta) {
+        __m256i t = montgomery_mul_avx(b, zeta);
+        b = _mm256_sub_epi16(a, t);
+        a = _mm256_add_epi16(a, t);
+    }
+
+    void ntt_avx(i16* r) {
+        // --- Phase 1: AVX (128, 64, 32, 16) ---
+        __m256i zeta = _mm256_set1_epi16(zetas[1]);
+        for(int i=0; i<128; i+=16) {
+            __m256i a = _mm256_loadu_si256((__m256i*)&r[i]);
+            __m256i b = _mm256_loadu_si256((__m256i*)&r[i+128]);
+            butterfly_avx(a, b, zeta);
+            _mm256_storeu_si256((__m256i*)&r[i], a);
+            _mm256_storeu_si256((__m256i*)&r[i+128], b);
         }
-        return (i16)res;
-    }
-    uint8_t bitrev7(uint8_t n) {
-        uint8_t r = 0;
-        for(int i=0; i<7; i++) if((n >> i) & 1) r |= (1 << (6-i));
-        return r;
-    }
-    void init_tables() {
-        static bool initialized = false;
-        if (initialized) return;
-        for(int i = 0; i < 128; i++) zetas[i] = mod_pow(ZETA, bitrev7(i));
-        for(int i = 0; i < 16; i++) { 
-            i16* vec_ptr = &zetas_avx_storage[i * 16];
-            i16 z0 = zetas[64 + 4*i + 0]; i16 z1 = zetas[64 + 4*i + 1];
-            i16 z2 = zetas[64 + 4*i + 2]; i16 z3 = zetas[64 + 4*i + 3];
-            vec_ptr[0] = z0; vec_ptr[1] = z0; vec_ptr[2] = -z0; vec_ptr[3] = -z0;
-            vec_ptr[4] = z1; vec_ptr[5] = z1; vec_ptr[6] = -z1; vec_ptr[7] = -z1;
-            vec_ptr[8] = z2; vec_ptr[9] = z2; vec_ptr[10] = -z2; vec_ptr[11] = -z2;
-            vec_ptr[12] = z3; vec_ptr[13] = z3; vec_ptr[14] = -z3; vec_ptr[15] = -z3;
+
+        int k = 2;
+        for(int len=64; len>=16; len/=2) {
+             for(int start=0; start<256; start+=2*len) {
+                 zeta = _mm256_set1_epi16(zetas[k++]);
+                 for(int i=start; i<start+len; i+=16) {
+                    __m256i a = _mm256_loadu_si256((__m256i*)&r[i]);
+                    __m256i b = _mm256_loadu_si256((__m256i*)&r[i+len]);
+                    butterfly_avx(a, b, zeta);
+                    _mm256_storeu_si256((__m256i*)&r[i], a);
+                    _mm256_storeu_si256((__m256i*)&r[i+len], b);
+                 }
+             }
         }
-        initialized = true;
-    }
 
-    // [关键修复] 安全的 AVX2 模乘 (Float Approx + Correction)
-    inline __m256i vec_mul_mod_safe(__m256i a, __m256i b) {
-        __m128i a_lo = _mm256_castsi256_si128(a);
-        __m128i a_hi = _mm256_extracti128_si256(a, 1);
-        __m128i b_lo = _mm256_castsi256_si128(b);
-        __m128i b_hi = _mm256_extracti128_si256(b, 1);
-        __m256i a_lo_32 = _mm256_cvtepi16_epi32(a_lo);
-        __m256i a_hi_32 = _mm256_cvtepi16_epi32(a_hi);
-        __m256i b_lo_32 = _mm256_cvtepi16_epi32(b_lo);
-        __m256i b_hi_32 = _mm256_cvtepi16_epi32(b_hi);
-        __m256i prod_lo = _mm256_mullo_epi32(a_lo_32, b_lo_32);
-        __m256i prod_hi = _mm256_mullo_epi32(a_hi_32, b_hi_32);
-        __m256i v_q = _mm256_set1_epi32(Q);
-
-        // 修正逻辑: 确保结果在 [0, Q)
-        auto reduce = [&](__m256i val) {
-            __m256 vf = _mm256_cvtepi32_ps(val);
-            __m256 iq = _mm256_set1_ps(1.0f / 3329.0f);
-            __m256i q = _mm256_cvttps_epi32(_mm256_mul_ps(vf, iq));
-            __m256i r = _mm256_sub_epi32(val, _mm256_mullo_epi32(q, v_q));
-            // Correction 1: r < 0 -> r += Q
-            __m256i m1 = _mm256_cmpgt_epi32(_mm256_setzero_si256(), r);
-            r = _mm256_add_epi32(r, _mm256_and_si256(m1, v_q));
-            // Correction 2: r >= Q -> r -= Q
-            __m256i m2 = _mm256_cmpgt_epi32(r, _mm256_sub_epi32(v_q, _mm256_set1_epi32(1)));
-            r = _mm256_sub_epi32(r, _mm256_and_si256(m2, v_q));
-            return r;
-        };
-        __m256i rl = reduce(prod_lo);
-        __m256i rh = reduce(prod_hi);
-        return _mm256_permute4x64_epi64(_mm256_packus_epi32(rl, rh), 0xD8);
-    }
-
-    // NTT 结构保持部分向量化 (上层向量化，下层标量)
-    void ntt_forward(std::vector<i16>& a) {
-        int k = 1;
-        if (params::USE_AVX2) {
-            const __m256i vq = _mm256_set1_epi16(Q);
-            for (int len = 128; len >= 16; len >>= 1) {
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    i16 zeta = zetas[k++];
-                    __m256i v_zeta = _mm256_set1_epi16(zeta);
-                    for (int j = start; j < start + len; j += 16) {
-                        __m256i aj = _mm256_loadu_si256((__m256i*)&a[j]);
-                        __m256i aj_len = _mm256_loadu_si256((__m256i*)&a[j + len]);
-                        __m256i t = vec_mul_mod_safe(aj_len, v_zeta);
-                        __m256i v_sub = _mm256_sub_epi16(aj, t);
-                        __m256i mask_neg = _mm256_cmpgt_epi16(_mm256_setzero_si256(), v_sub);
-                        v_sub = _mm256_add_epi16(v_sub, _mm256_and_si256(mask_neg, vq));
-                        __m256i v_add = _mm256_add_epi16(aj, t);
-                        __m256i v_limit = _mm256_sub_epi16(vq, _mm256_set1_epi16(1));
-                        __m256i mask_ge = _mm256_cmpgt_epi16(v_add, v_limit);
-                        v_add = _mm256_sub_epi16(v_add, _mm256_and_si256(mask_ge, vq));
-                        _mm256_storeu_si256((__m256i*)&a[j + len], v_sub);
-                        _mm256_storeu_si256((__m256i*)&a[j], v_add);
-                    }
-                }
-            }
-            for (int len = 8; len >= 2; len >>= 1) {
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    i16 zeta = zetas[k++];
-                    for (int j = start; j < start + len; j++) {
-                        i16 t = barrett_reduce((i32)zeta * a[j + len]);
-                        a[j + len] = barrett_reduce(a[j] - t);
-                        a[j] = barrett_reduce(a[j] + t);
-                    }
-                }
-            }
-        } else {
-            for (int len = 128; len >= 2; len >>= 1) {
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    i16 zeta = zetas[k++];
-                    for (int j = start; j < start + len; j++) {
-                        i16 t = barrett_reduce((i32)zeta * a[j + len]);
-                        a[j + len] = barrett_reduce(a[j] - t);
-                        a[j] = barrett_reduce(a[j] + t);
-                    }
+        // --- Phase 2: Scalar Fallback (8, 4, 2) ---
+        for(int len = 8; len >= 2; len >>= 1) {
+            for(int start = 0; start < 256; start += 2*len) {
+                i16 z = zetas[k++];
+                for(int j = start; j < start + len; j++) {
+                    i16 t = fqmul(z, r[j + len]);
+                    r[j + len] = r[j] - t;
+                    r[j] = r[j] + t;
                 }
             }
         }
     }
 
-    void ntt_inverse(std::vector<i16>& a) {
-        if (params::USE_AVX2) {
-            const __m256i vq = _mm256_set1_epi16(Q);
-            for (int len = 2; len <= 8; len <<= 1) {
-                int k_start = 128 / len;
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    int k = k_start + (start / (2 * len));
-                    i16 zeta = zetas[k];
-                    i16 zeta_inv = mod_pow(zeta, Q - 2);
-                    for (int j = start; j < start + len; j++) {
-                        i16 t = a[j];
-                        a[j] = barrett_reduce(t + a[j + len]);
-                        i32 diff = t - a[j + len];
-                        a[j + len] = barrett_reduce(diff * (i32)zeta_inv);
-                    }
+    // =============================================================
+    // 4. Robust AVX2 InvNTT
+    // =============================================================
+    
+    inline void inv_butterfly_avx(__m256i& a, __m256i& b, __m256i zeta) {
+        __m256i sum = _mm256_add_epi16(a, b);
+        __m256i diff = _mm256_sub_epi16(b, a); // b - a
+        a = barrett_reduce_avx(sum);           
+        b = montgomery_mul_avx(diff, zeta);
+    }
+
+    void invntt_avx(i16* r) {
+        int k = 127;
+        
+        // --- Phase 1: Scalar Fallback (2, 4) ---
+        for(int len = 2; len <= 4; len <<= 1) {
+            for(int start = 0; start < 256; start += 2*len) {
+                i16 z = zetas[k--];
+                for(int j = start; j < start + len; j++) {
+                    i16 t = r[j];
+                    r[j] = barrett_reduce(t + r[j + len]);
+                    r[j + len] = r[j + len] - t; // b - a
+                    r[j + len] = fqmul(z, r[j + len]);
                 }
             }
-            for (int len = 16; len <= 128; len <<= 1) {
-                int k_start = 128 / len;
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    int k = k_start + (start / (2 * len));
-                    i16 zeta = zetas[k];
-                    i16 zeta_inv = mod_pow(zeta, Q - 2);
-                    __m256i v_zeta_inv = _mm256_set1_epi16(zeta_inv);
-                    for (int j = start; j < start + len; j += 16) {
-                        __m256i aj = _mm256_loadu_si256((__m256i*)&a[j]);
-                        __m256i aj_len = _mm256_loadu_si256((__m256i*)&a[j + len]);
-                        __m256i v_add = _mm256_add_epi16(aj, aj_len);
-                        __m256i v_limit = _mm256_sub_epi16(vq, _mm256_set1_epi16(1));
-                        __m256i mask_ge = _mm256_cmpgt_epi16(v_add, v_limit);
-                        v_add = _mm256_sub_epi16(v_add, _mm256_and_si256(mask_ge, vq));
-                        __m256i v_sub = _mm256_sub_epi16(aj, aj_len);
-                        __m256i mask_neg = _mm256_cmpgt_epi16(_mm256_setzero_si256(), v_sub);
-                        v_sub = _mm256_add_epi16(v_sub, _mm256_and_si256(mask_neg, vq));
-                        __m256i v_mul = vec_mul_mod_safe(v_sub, v_zeta_inv);
-                        _mm256_storeu_si256((__m256i*)&a[j], v_add);
-                        _mm256_storeu_si256((__m256i*)&a[j + len], v_mul);
-                    }
+        }
+
+        // --- Phase 2: AVX Layer 8 ---
+        for(int start = 0; start < 256; start += 16) {
+             __m256i zeta = _mm256_set1_epi16(zetas[k--]);
+             __m256i v = _mm256_loadu_si256((__m256i*)&r[start]);
+             __m256i b_swapped = _mm256_permute2x128_si256(v, v, 0x01); 
+             __m256i a = v; 
+             
+             __m256i sum = _mm256_add_epi16(a, b_swapped);
+             __m256i diff = _mm256_sub_epi16(b_swapped, a); 
+             
+             a = barrett_reduce_avx(sum);          
+             b_swapped = montgomery_mul_avx(diff, zeta); 
+             
+             __m256i final_v = _mm256_inserti128_si256(a, _mm256_castsi256_si128(b_swapped), 1);
+             _mm256_storeu_si256((__m256i*)&r[start], final_v);
+        }
+
+        // --- Phase 3: AVX Large Layers (16..128) ---
+        for(int len = 16; len <= 128; len <<= 1) {
+            for(int start = 0; start < 256; start += 2*len) {
+                __m256i zeta = _mm256_set1_epi16(zetas[k--]);
+                for(int j = start; j < start + len; j+=16) {
+                    __m256i a = _mm256_loadu_si256((__m256i*)&r[j]);
+                    __m256i b = _mm256_loadu_si256((__m256i*)&r[j+len]);
+                    
+                    inv_butterfly_avx(a, b, zeta);
+                    
+                    _mm256_storeu_si256((__m256i*)&r[j], a);
+                    _mm256_storeu_si256((__m256i*)&r[j+len], b);
                 }
             }
-            i16 f = mod_pow(128, Q - 2);
-            __m256i v_f = _mm256_set1_epi16(f);
-            for(int i = 0; i < params::N; i += 16) {
-                __m256i val = _mm256_loadu_si256((__m256i*)&a[i]);
-                __m256i scaled = vec_mul_mod_safe(val, v_f);
-                _mm256_storeu_si256((__m256i*)&a[i], scaled);
-            }
-        } else {
-            for (int len = 2; len <= 128; len <<= 1) {
-                int k_start = 128 / len;
-                for (int start = 0; start < params::N; start += 2 * len) {
-                    int k = k_start + (start / (2 * len));
-                    i16 zeta = zetas[k];
-                    i16 zeta_inv = mod_pow(zeta, Q - 2);
-                    for (int j = start; j < start + len; j++) {
-                        i16 t = a[j];
-                        a[j] = barrett_reduce(t + a[j + len]);
-                        i32 diff = t - a[j + len];
-                        a[j + len] = barrett_reduce(diff * (i32)zeta_inv);
-                    }
-                }
-            }
-            i16 f = mod_pow(128, Q - 2);
-            for(int i=0; i<params::N; i++) a[i] = barrett_reduce((i32)a[i] * f);
+        }
+        
+        // Final Factor Scaling (AVX)
+        const __m256i v_f = AVX_F;
+        for(int i=0; i<256; i+=16) {
+             __m256i a = _mm256_loadu_si256((__m256i*)&r[i]);
+             a = montgomery_mul_avx(a, v_f);
+             _mm256_storeu_si256((__m256i*)&r[i], a);
         }
     }
 
-    void basemul_avx(std::vector<i16>& r, const std::vector<i16>& a, const std::vector<i16>& b) {
-        const __m256i vq = _mm256_set1_epi16(Q);
-        for (int i = 0; i < params::N / 32; i++) {
-            int idx1 = 32 * i;
-            __m256i va1 = _mm256_loadu_si256((__m256i*)&a[idx1]);
-            __m256i vb1 = _mm256_loadu_si256((__m256i*)&b[idx1]);
-            __m256i v_z1 = _mm256_load_si256((__m256i*)&zetas_avx_storage[(2*i) * 16]);
-            __m256i prod1_1 = vec_mul_mod_safe(va1, vb1);
-            __m256i va_swap1 = _mm256_shuffle_epi8(va1, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i prod2_1 = vec_mul_mod_safe(va_swap1, vb1);
-            __m256i prod1_swap1 = _mm256_shuffle_epi8(prod1_1, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i term_zeta1 = vec_mul_mod_safe(prod1_swap1, v_z1);
-            __m256i r_even1 = _mm256_add_epi16(prod1_1, term_zeta1);
-            __m256i prod2_swap1 = _mm256_shuffle_epi8(prod2_1, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i r_odd1 = _mm256_add_epi16(prod2_1, prod2_swap1);
-            __m256i res1 = _mm256_blend_epi16(r_even1, r_odd1, 0xAA);
-            __m256i mask1 = _mm256_cmpgt_epi16(res1, _mm256_sub_epi16(vq, _mm256_set1_epi16(1)));
-            res1 = _mm256_sub_epi16(res1, _mm256_and_si256(mask1, vq));
-            _mm256_storeu_si256((__m256i*)&r[idx1], res1);
+    // =============================================================
+    // 5. Wrappers & BaseMul
+    // =============================================================
+    
+    inline __m256i swap_adjacent_pairs(__m256i v) {
+        v = _mm256_shufflelo_epi16(v, 0xB1);
+        v = _mm256_shufflehi_epi16(v, 0xB1);
+        return v;
+    }
 
-            int idx2 = 32 * i + 16;
-            __m256i va2 = _mm256_loadu_si256((__m256i*)&a[idx2]);
-            __m256i vb2 = _mm256_loadu_si256((__m256i*)&b[idx2]);
-            __m256i v_z2 = _mm256_load_si256((__m256i*)&zetas_avx_storage[(2*i + 1) * 16]);
-            __m256i prod1_2 = vec_mul_mod_safe(va2, vb2);
-            __m256i va_swap2 = _mm256_shuffle_epi8(va2, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i prod2_2 = vec_mul_mod_safe(va_swap2, vb2);
-            __m256i prod1_swap2 = _mm256_shuffle_epi8(prod1_2, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i term_zeta2 = vec_mul_mod_safe(prod1_swap2, v_z2);
-            __m256i r_even2 = _mm256_add_epi16(prod1_2, term_zeta2);
-            __m256i prod2_swap2 = _mm256_shuffle_epi8(prod2_2, _mm256_setr_epi8(2,3, 0,1, 6,7, 4,5, 10,11, 8,9, 14,15, 12,13, 18,19, 16,17, 22,23, 20,21, 26,27, 24,25, 30,31, 28,29));
-            __m256i r_odd2 = _mm256_add_epi16(prod2_2, prod2_swap2);
-            __m256i res2 = _mm256_blend_epi16(r_even2, r_odd2, 0xAA);
-            __m256i mask2 = _mm256_cmpgt_epi16(res2, _mm256_sub_epi16(vq, _mm256_set1_epi16(1)));
-            res2 = _mm256_sub_epi16(res2, _mm256_and_si256(mask2, vq));
-            _mm256_storeu_si256((__m256i*)&r[idx2], res2);
+    void poly_basemul_avx(i16* r, const i16* a, const i16* b) {
+        for(int i=0; i<256/16; i++) { 
+            i16 z0 = zetas[64 + i*4 + 0];
+            i16 z1 = zetas[64 + i*4 + 1];
+            i16 z2 = zetas[64 + i*4 + 2];
+            i16 z3 = zetas[64 + i*4 + 3];
+            __m256i vzeta = _mm256_set_epi16(-z3, -z3, z3, z3, -z2, -z2, z2, z2, -z1, -z1, z1, z1, -z0, -z0, z0, z0);
+            __m256i va = _mm256_loadu_si256((__m256i*)&a[i*16]);
+            __m256i vb = _mm256_loadu_si256((__m256i*)&b[i*16]);
+            __m256i va_swap = swap_adjacent_pairs(va);
+            __m256i v_prod_rot = montgomery_mul_avx(va_swap, vb); 
+            __m256i r1_vec = _mm256_add_epi16(v_prod_rot, swap_adjacent_pairs(v_prod_rot));
+            __m256i v_prod = montgomery_mul_avx(va, vb);
+            __m256i v_prod_swapped = swap_adjacent_pairs(v_prod);
+            __m256i v_term_zeta = montgomery_mul_avx(v_prod_swapped, vzeta);
+            __m256i r0_vec = _mm256_add_epi16(v_prod, v_term_zeta);
+            __m256i res = _mm256_blend_epi16(r0_vec, r1_vec, 0xAA);
+            _mm256_storeu_si256((__m256i*)&r[i*16], res);
         }
     }
-    void basemul(std::vector<i16>& r, const std::vector<i16>& a, const std::vector<i16>& b) {
-        for (int i = 0; i < params::N / 4; i++) {
+
+    void poly_tomont_avx(i16* r) {
+        for(int i=0; i<256; i+=16) {
+            __m256i a = _mm256_loadu_si256((__m256i*)&r[i]);
+            a = montgomery_mul_avx(a, AVX_R2);
+            _mm256_storeu_si256((__m256i*)&r[i], a);
+        }
+    }
+
+    // --- Scalar Fallback Implementations ---
+
+    void ntt_scalar(i16* r) {
+        unsigned int len, start, j, k=1;
+        i16 t, zeta;
+        for(len = 128; len >= 2; len >>= 1) {
+            for(start = 0; start < 256; start = j + len) {
+                zeta = zetas[k++];
+                for(j = start; j < start + len; j++) {
+                    t = fqmul(zeta, r[j + len]);
+                    r[j + len] = r[j] - t;
+                    r[j] = r[j] + t;
+                }
+            }
+        }
+    }
+    
+    void invntt_scalar(i16* r) {
+        unsigned int start, len, j, k=127;
+        i16 t, zeta;
+        for(len = 2; len <= 128; len <<= 1) {
+            for(start = 0; start < 256; start = j + len) {
+                zeta = zetas[k--];
+                for(j = start; j < start + len; j++) {
+                    t = r[j];
+                    r[j] = barrett_reduce(t + r[j + len]);
+                    r[j + len] = r[j + len] - t; 
+                    r[j + len] = fqmul(zeta, r[j + len]);
+                }
+            }
+        }
+        for(j = 0; j < 256; j++) r[j] = fqmul(r[j], F_FACTOR); 
+    }
+
+    // [FIXED] Split into small steps to avoid int32 overflow
+    void basemul_scalar(std::vector<i16>& r, const std::vector<i16>& a, const std::vector<i16>& b) {
+        for (int i = 0; i < 256 / 4; i++) {
             i16 zeta = zetas[64 + i];
-            i32 a0 = a[4*i], a1 = a[4*i+1], b0 = b[4*i], b1 = b[4*i+1];
-            r[4*i]   = barrett_reduce(a0*b0 + barrett_reduce(a1*b1)*zeta);
-            r[4*i+1] = barrett_reduce(a0*b1 + a1*b0);
-            i32 a2 = a[4*i+2], a3 = a[4*i+3], b2 = b[4*i+2], b3 = b[4*i+3];
-            i16 m_zeta = barrett_reduce(-zeta);
-            r[4*i+2] = barrett_reduce(a2*b2 + barrett_reduce(a3*b3)*m_zeta);
-            r[4*i+3] = barrett_reduce(a2*b3 + a3*b2);
+            
+            // r[0] = a1*b1*zeta + a0*b0
+            i16 t1 = fqmul(a[4*i+1], b[4*i+1]);
+            t1 = fqmul(t1, zeta);
+            i16 t0 = fqmul(a[4*i], b[4*i]);
+            r[4*i] = t1 + t0;
+
+            // r[1] = a0*b1 + a1*b0
+            r[4*i+1] = fqmul(a[4*i], b[4*i+1]) + fqmul(a[4*i+1], b[4*i]);
+            
+            // r[2] = a3*b3*(-zeta) + a2*b2
+            i16 m_zeta = -zeta;
+            i16 t3 = fqmul(a[4*i+3], b[4*i+3]);
+            t3 = fqmul(t3, m_zeta);
+            i16 t2 = fqmul(a[4*i+2], b[4*i+2]);
+            r[4*i+2] = t3 + t2;
+
+            // r[3] = a2*b3 + a3*b2
+            r[4*i+3] = fqmul(a[4*i+2], b[4*i+3]) + fqmul(a[4*i+3], b[4*i+2]);
         }
     }
+
+    // =============================================================
+    // 6. Main Entry Point
+    // =============================================================
+
     std::vector<i16> poly_mul_ntt(const std::vector<i16>& a, const std::vector<i16>& b) {
-        init_tables();
-        std::vector<i16> fa = a;
-        std::vector<i16> fb = b;
-        std::vector<i16> res(params::N);
-        ntt_forward(fa);
-        ntt_forward(fb);
-        if (params::USE_AVX2) basemul_avx(res, fa, fb);
-        else basemul(res, fa, fb);
-        ntt_inverse(res);
-        for(int i=0; i<params::N; i++) {
-            i16 v = res[i];
-            res[i] = (v < 0) ? v + Q : v;
+        std::vector<i16> res(256);
+        std::vector<i16> ta = a;
+        std::vector<i16> tb = b;
+
+        if (params::USE_AVX2) {
+            // 1. To Montgomery
+            poly_tomont_avx(ta.data());
+            poly_tomont_avx(tb.data());
+            
+            // 2. NTT (Mixed)
+            ntt_avx(ta.data());
+            ntt_avx(tb.data());
+            
+            // 3. BaseMul (AVX)
+            poly_basemul_avx(res.data(), ta.data(), tb.data());
+            
+            // 4. InvNTT (Mixed)
+            invntt_avx(res.data());
+            
+            // 5. Final Reduce & Normalize (AVX)
+            const __m256i v_one = _mm256_set1_epi16(1); 
+            for(int i=0; i<256; i+=16) {
+                __m256i val = _mm256_loadu_si256((__m256i*)&res[i]);
+                val = montgomery_mul_avx(val, v_one); 
+                val = montgomery_mul_avx(val, v_one); 
+                __m256i mask = _mm256_cmpgt_epi16(_mm256_setzero_si256(), val); 
+                __m256i add_q = _mm256_and_si256(mask, AVX_Q);
+                val = _mm256_add_epi16(val, add_q);
+                _mm256_storeu_si256((__m256i*)&res[i], val);
+            }
+        } else {
+            // Scalar Fallback
+            for(int i=0; i<256; i++) { ta[i] = fqmul(ta[i], R2); tb[i] = fqmul(tb[i], R2); }
+            ntt_scalar(ta.data());
+            ntt_scalar(tb.data());
+            basemul_scalar(res, ta, tb);
+            invntt_scalar(res.data());
+            for(int i=0; i<256; i++) {
+                i16 val = res[i];
+                val = montgomery_reduce((i32)val); 
+                val = montgomery_reduce((i32)val); 
+                res[i] = (val < 0) ? val + Q : val;
+            }
         }
         return res;
     }
+
 }
